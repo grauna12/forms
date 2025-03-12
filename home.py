@@ -18,6 +18,24 @@ st.set_page_config(
     layout="wide"
 )
 
+# Lista de funcionários predefinidos
+FUNCIONARIOS_PREDEFINIDOS = [
+    "Alan",
+    "Carlos Henrique",
+    "Darlysson",
+    "Domingos",
+    "Douglas",
+    "Francivaldo",
+    "Hesletti",
+    "Joelson",
+    "Thiago Victor",
+    "Wanderson",
+    "Clemerson",
+    "Samuel",
+    "Yago",
+    "João Davi"
+]
+
 # Define as colunas padrão do sistema
 COLUNAS_PADRAO = [
     "Nome", "Semana", "Box/Uniforme", "Ferramentas", "EPI", "Horário", 
@@ -169,6 +187,15 @@ def save_to_gsheet(new_data):
     else:
         return False
 
+# Função para converter valores string para numéricos para cálculos e gráficos
+def converter_valor_numerico(valor):
+    if isinstance(valor, str):
+        if valor == "Positivo":
+            return 1
+        elif valor == "Ruim":
+            return 0
+    return valor
+
 # Título principal
 st.title("Sistema de Avaliação de Funcionários")
 
@@ -176,6 +203,14 @@ st.title("Sistema de Avaliação de Funcionários")
 if 'funcionarios_df' not in st.session_state:
     # Carrega dados existentes do Google Sheets
     st.session_state.funcionarios_df = load_data_from_gsheet()
+    
+    # Converte valores antigos para novos valores, se necessário
+    if not st.session_state.funcionarios_df.empty:
+        for criterio in COLUNAS_PADRAO[2:-2]:  # Excluindo Nome, Semana, Observações e Data
+            if criterio in st.session_state.funcionarios_df.columns:
+                st.session_state.funcionarios_df[criterio] = st.session_state.funcionarios_df[criterio].replace(
+                    {"Satisfatório": "Positivo", "Insatisfatório": "Ruim"}
+                )
 
 # Sidebar para navegação
 st.sidebar.title("Menu")
@@ -192,14 +227,23 @@ if pagina == "Nova Avaliação":
         opcao_funcionario = st.radio("Selecionar opção:", ["Selecionar funcionário existente", "Adicionar novo funcionário"])
         
         if opcao_funcionario == "Selecionar funcionário existente":
+            # Solução corrigida - Combinando funcionários existentes e predefinidos
             nomes_existentes = sorted(list(st.session_state.funcionarios_df["Nome"].unique()))
-            if nomes_existentes:
-                nome_funcionario = st.selectbox("Selecione o funcionário:", nomes_existentes)
-            else:
-                st.warning("Não há funcionários cadastrados. Por favor, adicione um novo funcionário.")
-                nome_funcionario = st.text_input("Nome do funcionário:")
+            
+            # Combine os nomes existentes com os predefinidos, removendo duplicatas
+            todos_funcionarios = sorted(list(set(nomes_existentes + FUNCIONARIOS_PREDEFINIDOS)))
+            
+            # Selecione da lista combinada
+            nome_funcionario = st.selectbox("Selecione o funcionário:", todos_funcionarios)
         else:
-            nome_funcionario = st.text_input("Nome do funcionário:")
+            # Opção para adicionar novo funcionário - usa a lista predefinida
+            nome_funcionario = st.selectbox(
+                "Selecione o funcionário:",
+                options=FUNCIONARIOS_PREDEFINIDOS + ["Outro (especificar)"]
+            )
+            
+            if nome_funcionario == "Outro (especificar)":
+                nome_funcionario = st.text_input("Digite o nome do funcionário:")
     
     with col2:
         semana = st.number_input("Número da semana:", min_value=1, max_value=5, value=1)
@@ -209,7 +253,7 @@ if pagina == "Nova Avaliação":
     
     # Critérios de avaliação
     st.subheader("Critérios de Avaliação")
-    st.info("Avalie o funcionário em cada critério de 0 a 10")
+    st.info("Avalie o funcionário em cada critério como 'Positivo' ou 'Ruim'")
     
     criterios = {
         "Box/Uniforme": "Avaliação da organização do espaço de trabalho e uso correto do uniforme",
@@ -229,20 +273,18 @@ if pagina == "Nova Avaliação":
         with col1 if i % 2 == 0 else col2:
             st.write(f"**{criterio}**")
             st.caption(descricao)
-            avaliacoes[criterio] = st.slider(
-                f"Nota para {criterio}", 
-                min_value=0, 
-                max_value=10, 
-                value=5, 
-                key=f"slider_{criterio}",
-                help=f"0 = Insatisfatório, 10 = Excelente"
+            avaliacoes[criterio] = st.radio(
+                f"Avaliação para {criterio}", 
+                options=["Positivo", "Ruim"],
+                key=f"radio_{criterio}",
+                horizontal=True
             )
     
     observacoes = st.text_area("Observações adicionais:", height=100)
     
     # Botão para registrar avaliação
     if st.button("Registrar Avaliação", type="primary"):
-        if nome_funcionario:
+        if nome_funcionario and nome_funcionario != "Outro (especificar)":
             nova_avaliacao = {
                 "Nome": nome_funcionario,
                 "Semana": semana,
@@ -279,6 +321,13 @@ elif pagina == "Histórico":
     # Botão para atualizar dados do Google Sheets
     if st.button("Atualizar dados do Google Sheets"):
         st.session_state.funcionarios_df = load_data_from_gsheet()
+        # Converte valores antigos para novos valores, se necessário
+        if not st.session_state.funcionarios_df.empty:
+            for criterio in COLUNAS_PADRAO[2:-2]:  # Excluindo Nome, Semana, Observações e Data
+                if criterio in st.session_state.funcionarios_df.columns:
+                    st.session_state.funcionarios_df[criterio] = st.session_state.funcionarios_df[criterio].replace(
+                        {"Satisfatório": "Positivo", "Insatisfatório": "Ruim"}
+                    )
         st.success("Dados atualizados com sucesso!")
     
     if st.session_state.funcionarios_df.empty:
@@ -342,88 +391,97 @@ elif pagina == "Relatórios":
         df_funcionario = st.session_state.funcionarios_df[st.session_state.funcionarios_df["Nome"] == nome_relatorio]
         
         if not df_funcionario.empty:
-            # Calcular médias por critério
+            # Critérios de avaliação para análise
             criterios_avaliacao = [
                 "Box/Uniforme", "Ferramentas", "EPI", "Horário", "Apontamento",
                 "Execução de Serviços", "Uso de celular/Indisciplinas", "Revisão de entrega(Padrão Honda)"
             ]
             
-            medias_criterios = df_funcionario[criterios_avaliacao].mean().round(1)
-            media_geral = medias_criterios.mean().round(1)
+            # Converter valores de texto para números para cálculos
+            df_numerica = df_funcionario.copy()
+            for criterio in criterios_avaliacao:
+                df_numerica[criterio] = df_numerica[criterio].apply(lambda x: 1 if x == "Positivo" else 0)
+            
+            # Calcular percentual de "Positivo" por critério
+            percentuais = {}
+            for criterio in criterios_avaliacao:
+                total_avaliacoes = len(df_numerica)
+                positivos = df_numerica[criterio].sum()
+                percentuais[criterio] = (positivos / total_avaliacoes * 100) if total_avaliacoes > 0 else 0
+            
+            # Calcular percentual geral de avaliações positivas
+            percentual_geral = sum(percentuais.values()) / len(percentuais) if percentuais else 0
             
             # Exibir resumo
             col1, col2 = st.columns([1, 2])
             
             with col1:
                 st.subheader(f"Resumo de {nome_relatorio}")
-                st.metric("Média Geral", f"{media_geral}/10")
+                st.metric("Percentual Positivo", f"{percentual_geral:.1f}%")
                 st.metric("Total de Avaliações", len(df_funcionario))
                 
-                # Determinar status baseado na média
-                if media_geral >= 8:
+                # Determinar status baseado no percentual
+                if percentual_geral >= 80:
                     status = "✅ Excelente"
-                elif media_geral >= 6:
-                    status = "✓ Satisfatório"
-                elif media_geral >= 4:
+                elif percentual_geral >= 60:
+                    status = "✓ Positivo"
+                elif percentual_geral >= 40:
                     status = "⚠️ Precisa Melhorar"
                 else:
-                    status = "❌ Insatisfatório"
+                    status = "❌ Ruim"
                 
                 st.metric("Status", status)
             
             with col2:
-                # Gráfico de radar para todas as dimensões
-                fig, ax = plt.subplots(figsize=(8, 6), subplot_kw=dict(polar=True))
+                # Gráfico de barras para todos os critérios
+                fig, ax = plt.subplots(figsize=(10, 6))
+                criterios_curtos = [c[:15] + '...' if len(c) > 15 else c for c in criterios_avaliacao]
+                valores = [percentuais[c] for c in criterios_avaliacao]
                 
-                # Número de categorias
-                N = len(criterios_avaliacao)
+                # Colorir barras com base no valor
+                cores = ['green' if v >= 60 else 'red' for v in valores]
                 
-                # Ângulos para cada eixo do gráfico radar
-                angles = np.linspace(0, 2 * np.pi, N, endpoint=False).tolist()
-                angles += angles[:1]  # Fechar o círculo
+                ax.bar(criterios_curtos, valores, color=cores)
+                ax.set_ylabel('% Positivo')
+                ax.set_ylim(0, 100)
+                ax.set_title(f'Desempenho por Critério - {nome_relatorio}')
+                plt.xticks(rotation=45, ha='right')
+                plt.tight_layout()
                 
-                # Valores para o gráfico
-                valores = medias_criterios.tolist()
-                valores += valores[:1]  # Fechar o círculo
-                
-                # Plotar
-                ax.plot(angles, valores, linewidth=2, linestyle='solid', label=nome_relatorio)
-                ax.fill(angles, valores, alpha=0.25)
-                
-                # Configurar o gráfico
-                ax.set_xticks(angles[:-1])
-                ax.set_xticklabels([c[:10] + '...' if len(c) > 10 else c for c in criterios_avaliacao])
-                ax.set_yticks([0, 2, 4, 6, 8, 10])
-                ax.set_ylim(0, 10)
-                ax.grid(True)
-                
-                plt.title(f"Perfil de Desempenho de {nome_relatorio}")
                 st.pyplot(fig)
             
             # Tabela de desempenho por critério
             st.subheader("Desempenho por Critério")
-            df_medias = pd.DataFrame({
+            df_desempenho = pd.DataFrame({
                 'Critério': criterios_avaliacao,
-                'Nota Média': [medias_criterios[c] for c in criterios_avaliacao]
+                'Percentual Positivo': [f"{percentuais[c]:.1f}%" for c in criterios_avaliacao],
+                'Status': ["Positivo" if percentuais[c] >= 60 else "Ruim" for c in criterios_avaliacao]
             })
-            st.dataframe(df_medias.sort_values('Nota Média', ascending=False), use_container_width=True)
+            st.dataframe(df_desempenho.sort_values('Percentual Positivo', ascending=False), use_container_width=True)
             
-            # Gráfico de evolução por semana
+            # Evolução ao longo do tempo (por semana)
             st.subheader("Evolução ao Longo do Tempo")
             
-            # Preparar dados para o gráfico de evolução
             if len(df_funcionario) > 1:  # Só faz sentido se houver mais de uma avaliação
-                df_evolucao = df_funcionario.sort_values('Semana')
+                # Agrupar por semana e calcular percentual de critérios positivos
+                df_evolucao = df_numerica.copy()
+                evolucao_semanas = {}
                 
-                # Calcular média geral para cada semana
-                medias_semana = df_evolucao.groupby('Semana')[criterios_avaliacao].mean().mean(axis=1)
+                for _, grupo in df_evolucao.groupby('Semana'):
+                    semana = grupo['Semana'].iloc[0]
+                    percentual = grupo[criterios_avaliacao].mean().mean() * 100
+                    evolucao_semanas[semana] = percentual
+                
+                # Ordenar semanas
+                semanas_ordenadas = sorted(evolucao_semanas.keys())
+                percentuais_ordenados = [evolucao_semanas[s] for s in semanas_ordenadas]
                 
                 # Plotar gráfico de linha
                 fig, ax = plt.subplots(figsize=(10, 5))
-                ax.plot(medias_semana.index, medias_semana.values, marker='o', linestyle='-', linewidth=2)
+                ax.plot(semanas_ordenadas, percentuais_ordenados, marker='o', linestyle='-', linewidth=2)
                 ax.set_xlabel('Semana')
-                ax.set_ylabel('Nota Média')
-                ax.set_ylim(0, 10)
+                ax.set_ylabel('% Positivo')
+                ax.set_ylim(0, 100)
                 ax.grid(True, linestyle='--', alpha=0.7)
                 plt.title(f"Evolução de Desempenho de {nome_relatorio} por Semana")
                 
@@ -433,16 +491,14 @@ elif pagina == "Relatórios":
             
             # Áreas para melhoria
             st.subheader("Áreas para Melhoria")
-            areas_melhoria = df_medias.sort_values('Nota Média').head(3)
+            areas_melhoria = [(c, percentuais[c]) for c in criterios_avaliacao]
+            areas_melhoria.sort(key=lambda x: x[1])
             
-            for _, row in areas_melhoria.iterrows():
-                criterio = row['Critério']
-                nota = row['Nota Média']
-                
-                if nota < 6:
-                    st.warning(f"**{criterio}**: {nota}/10 - Precisa de atenção especial")
+            for criterio, percentual in areas_melhoria[:3]:
+                if percentual < 60:
+                    st.warning(f"**{criterio}**: {percentual:.1f}% Positivo - Precisa de atenção especial")
                 else:
-                    st.info(f"**{criterio}**: {nota}/10 - Potencial para melhoria")
+                    st.info(f"**{criterio}**: {percentual:.1f}% Positivo - Potencial para melhoria")
                     
             # Download do relatório em Excel
             if st.button("Exportar Relatório Completo"):
@@ -451,16 +507,19 @@ elif pagina == "Relatórios":
                     # Dados individuais
                     df_funcionario.to_excel(writer, index=False, sheet_name='Avaliações')
                     
-                    # Médias por critério
-                    df_medias.to_excel(writer, index=False, sheet_name='Médias por Critério')
+                    # Percentuais por critério
+                    pd.DataFrame({
+                        'Critério': criterios_avaliacao,
+                        'Percentual Positivo': [percentuais[c] for c in criterios_avaliacao],
+                        'Status': ["Positivo" if percentuais[c] >= 60 else "Ruim" for c in criterios_avaliacao]
+                    }).to_excel(writer, index=False, sheet_name='Percentuais por Critério')
                     
                     # Evolução por semana (se disponível)
-                    if len(df_funcionario) > 1:
-                        df_evolucao_semana = pd.DataFrame({
-                            'Semana': medias_semana.index,
-                            'Média Geral': medias_semana.values
-                        })
-                        df_evolucao_semana.to_excel(writer, index=False, sheet_name='Evolução Temporal')
+                    if len(df_funcionario) > 1 and evolucao_semanas:
+                        pd.DataFrame({
+                            'Semana': semanas_ordenadas,
+                            '% Positivo': percentuais_ordenados
+                        }).to_excel(writer, index=False, sheet_name='Evolução Temporal')
                 
                 st.download_button(
                     label="Download Relatório Excel",
@@ -491,7 +550,54 @@ with st.sidebar.expander("Configurações"):
         1. Que as secrets do Streamlit estão configuradas corretamente (na seção Secrets do dashboard do Streamlit)
         2. Que a conta de serviço tem acesso à planilha
         """)
+    
+    # Opção para importar funcionários em massa
+    st.subheader("Importar Funcionários em Massa")
+    importar_funcionarios = st.checkbox("Mostrar importação em massa")
+    
+    if importar_funcionarios:
+        st.info("Cole a lista de funcionários abaixo, um por linha, para importar todos de uma vez.")
+        
+        funcionarios_input = st.text_area(
+            "Lista de funcionários:",
+            "\n".join(FUNCIONARIOS_PREDEFINIDOS),
+            height=200
+        )
+        
+        if st.button("Importar Todos os Funcionários"):
+            funcionarios_lista = [nome.strip() for nome in funcionarios_input.split("\n") if nome.strip()]
+            if funcionarios_lista:
+                # Verificar quais funcionários já existem no sistema
+                nomes_existentes = set(st.session_state.funcionarios_df["Nome"].unique())
+                novos_funcionarios = []
+                
+                for nome in funcionarios_lista:
+                    if nome not in nomes_existentes:
+                        novos_funcionarios.append(nome)
+                        # Adicionar funcionário com uma avaliação inicial (opcional)
+                        nova_avaliacao = {
+                            "Nome": nome,
+                            "Semana": 1,
+                            "Box/Uniforme": "Positivo",
+                            "Ferramentas": "Positivo",
+                            "EPI": "Positivo",
+                            "Horário": "Positivo",
+                            "Apontamento": "Positivo",
+                            "Execução de Serviços": "Positivo",
+                            "Uso de celular/Indisciplinas": "Positivo",
+                            "Revisão de entrega(Padrão Honda)": "Positivo",
+                            "Observações": "Importação inicial",
+                            "Data de Avaliação": datetime.now().strftime("%Y-%m-%d")
+                        }
+                        save_to_gsheet(nova_avaliacao)
+                
+                if novos_funcionarios:
+                    # Recarregar dados
+                    st.session_state.funcionarios_df = load_data_from_gsheet()
+                    st.success(f"{len(novos_funcionarios)} funcionários importados com sucesso!")
+                else:
+                    st.info("Todos os funcionários já existem no sistema.")
 
 # Rodapé
 st.markdown("---")
-st.caption("Sistema de Avaliação de Funcionários - Versão 1.0")
+st.caption("Sistema de Avaliação de Funcionários - Versão 1.1")
